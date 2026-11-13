@@ -188,6 +188,52 @@ function openKeyboard() {
     }, 10)
 }
 
+// Track long-press state
+var longPressTimers = {};
+var longPressDelay = 500; // milliseconds
+
+function setupLongPress(element, command, longPressCommand) {
+    let timer;
+    const startPress = (e) => {
+        clearTimeout(timer);
+        e.preventDefault();
+        timer = setTimeout(() => {
+            if (longPressCommand) {
+                sendCommand(longPressCommand, true);
+            } else {
+                sendCommand(command, true);
+            }
+        }, longPressDelay);
+    };
+
+    const endPress = (e) => {
+        clearTimeout(timer);
+        if (e.type === 'mouseup' || e.type === 'touchend') {
+            e.preventDefault();
+            sendCommand(command, false);
+        }
+    };
+
+    // Mouse events
+    element.addEventListener('mousedown', startPress);
+    element.addEventListener('mouseup', endPress);
+    element.addEventListener('mouseleave', () => clearTimeout(timer));
+    
+    // Touch events for mobile
+    element.addEventListener('touchstart', startPress, { passive: false });
+    element.addEventListener('touchend', endPress, { passive: false });
+    element.addEventListener('touchcancel', () => clearTimeout(timer));
+}
+
+// Initialize long-press for all remote buttons
+function initLongPress() {
+    document.querySelectorAll('[data-key]').forEach(button => {
+        const command = button.getAttribute('data-key');
+        const longPressCommand = button.getAttribute('data-long-press') || null;
+        setupLongPress(button, command, longPressCommand);
+    });
+}
+
 window.addEventListener('keyup', e => {
     if (e.key == 'Alt') {
         toggleAltText(true);
@@ -738,5 +784,8 @@ $(function() {
     initIPC();
     var wp = getWorkingPath();
     $("#workingPathSpan").html(`<strong>${wp}</strong>`);
+    
+    // Initialize long-press functionality after DOM is loaded
+    setTimeout(initLongPress, 1000);
     ipcRenderer.invoke('isWSRunning');
 })

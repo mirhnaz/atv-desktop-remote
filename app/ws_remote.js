@@ -162,8 +162,23 @@ function ws_startScan() {
 }
 
 function ws_sendCommand(cmd) {
-    //console.log(`ws_sendCommand: ${cmd}`)
-    sendMessage("key", cmd)
+    // Handle fast volume commands
+    if (cmd === 'volume_up_fast') {
+        // Send multiple volume up commands in quick succession
+        for (let i = 0; i < 3; i++) {
+            setTimeout(() => sendMessage("key", 'volume_up'), i * 50);
+        }
+        return;
+    } else if (cmd === 'volume_down_fast') {
+        // Send multiple volume down commands in quick succession
+        for (let i = 0; i < 3; i++) {
+            setTimeout(() => sendMessage("key", 'volume_down'), i * 50);
+        }
+        return;
+    }
+    
+    // Default command handling
+    sendMessage("key", cmd);
 }
 
 function ws_sendCommandAction(cmd, taction) {
