@@ -10,3 +10,8 @@ build/pyscripts.js
 stopserver
 .env*
 .direnv/
+pyatv
+old_dist
+build/__pycache__
+REF*.md
+app/atvjs

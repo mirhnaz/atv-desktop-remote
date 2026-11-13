@@ -3,6 +3,8 @@ A simple menubar app that allows you to control an Apple TV from your desktop
 
  ![What this application looks like when running in either light or dark mode](screenshot_new.png)
 
+
+
 ## Installation 
 
 If you have homebrew installed `brew install atv-remote`
@@ -14,10 +16,17 @@ macOS and Windows versions can be downloaded from here: https://github.com/bshar
 
  1. Keys are mapped to the keyboard when the application is open (pressing return or enter on the keyboard for select, delete for Menu, etc).
  2. Press `Option`, or `Alt` on Windows, to see what the characters are mapped to when the application is open.
-
+ 3. Long press buttons now works to simulate long presses on the remote
+ 
+ <p align="center">
+  <img src="buttonpress.gif" alt="long press button animation" width="200"/>
+</p>
+ 
+ 
+ 
  ## Running
 
- 1. Run `npm install` (`yarn` and `pnpm` should also work)
+ 1. Run `npm i --legacy-peer-deps` (other package manages may also work)
  2. Run `npm start`
  3. The application runs in the menubar. Look for a tiny remote icon and click on it. Right-click for more options.
  4. The first time the app runs it will need to pair with an Apple TV. You can pair with more than one.

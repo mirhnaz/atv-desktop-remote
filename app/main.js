@@ -8,12 +8,9 @@ const util = require('util');
 var secondWindow;
 process.env['MYPATH'] = path.join(process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + '/Library/Application Support' : process.env.HOME + "/.local/share"), "ATV Remote");
 const lodash = _ = require('./js/lodash.min');
-const server_runner = require('./server_runner')
 const fs = require('fs');
-server_runner.startServer();
 
-
-global["server_runner"] = server_runner;
+// No longer using Python server - atvjs communicates directly
 
 const preloadWindow = true;
 const readyEvent = preloadWindow ? "ready" : "after-create-window";
@@ -25,14 +22,95 @@ var handleVolumeButtonsGlobal = false;
 var mb;
 var kbHasFocus;
 
+// === Tray icon blink ===
+const BLINK_COUNT      = 4;    // number of on/off cycles per command
+const BLINK_ON_MS      = 20;   // blend icon duration per cycle
+const BLINK_OFF_MS     = 20;   // normal icon duration per cycle
+const FLASH_CLEANUP_MS = 1000; // ensure normal icon this long after last command
+let trayIconNormal = null;
+let trayIconFlash  = null;
+let blinkTimeouts  = [];
+let flashCleanupTimeout = null;
+
+function flashTrayIcon() {
+    if (!trayIconFlash || !mb?.tray) return;
+    blinkTimeouts.forEach(t => clearTimeout(t));
+    blinkTimeouts = [];
+    clearTimeout(flashCleanupTimeout);
+
+    for (let i = 0; i < BLINK_COUNT; i++) {
+        const t = i * (BLINK_ON_MS + BLINK_OFF_MS);
+        blinkTimeouts.push(
+            setTimeout(() => { if (mb?.tray) mb.tray.setImage(trayIconFlash);  }, t),
+            setTimeout(() => { if (mb?.tray) mb.tray.setImage(trayIconNormal); }, t + BLINK_ON_MS)
+        );
+    }
+
+    flashCleanupTimeout = setTimeout(() => {
+        if (mb?.tray) mb.tray.setImage(trayIconNormal);
+    }, FLASH_CLEANUP_MS);
+}
+
+// Always register the handler — flashTrayIcon() is a no-op when inactive
+ipcMain.handle('flashTrayIcon', () => flashTrayIcon());
+
+function initTrayAnimation() {
+    if (process.platform !== 'darwin') return;
+    if (!fs.existsSync(path.join(process.env['MYPATH'], 'animate_icon'))) return;
+
+    trayIconNormal = nativeImage.createFromPath(path.join(__dirname, 'images/icon.png'));
+    trayIconFlash  = nativeImage.createFromPath(path.join(__dirname, 'images/icon-dark.png'));
+    trayIconNormal.setTemplateImage(true);
+    console.log('Tray icon animation enabled');
+}
+
+const _win = process.platform === 'win32';
+const PREFIX_MAIN     = _win ? '[ main ]    ' : '⚙️  ';
+const PREFIX_RENDERER = _win ? '[renderer]  ' : '🖥️  ';
+const REPEAT_SEP      = _win ? 'x'            : '×';
+
+let printRendererOutput = true;
+let lastRendererMsg = null;
+let lastRendererCount = 0;
+let rendererLinePending = false;
+
+function flushRendererLine() {
+    if (rendererLinePending) {
+        process.stdout.write('\n');
+        rendererLinePending = false;
+        lastRendererMsg = null;
+        lastRendererCount = 0;
+    }
+}
+
 console._log = console.log;
 console.log = function() {
+    flushRendererLine();
     let txt = util.format(...[].slice.call(arguments)) + '\n'
-    process.stdout.write(txt);
+    process.stdout.write(PREFIX_MAIN + txt);
     if (win && win.webContents) {
         win.webContents.send('mainLog', txt);
     }
 }
+
+ipcMain.handle('printRendererOutput', (event, val) => {
+    printRendererOutput = !!val;
+    console.log(`printRendererOutput set to ${printRendererOutput}`);
+});
+
+ipcMain.handle('rendererLog', (event, txt) => {
+    if (!printRendererOutput) return;
+    if (txt === lastRendererMsg) {
+        lastRendererCount++;
+        process.stdout.write(`\r${PREFIX_RENDERER}${txt} ${REPEAT_SEP}${lastRendererCount}`);
+    } else {
+        flushRendererLine();
+        lastRendererMsg = txt;
+        lastRendererCount = 1;
+        process.stdout.write(`${PREFIX_RENDERER}${txt}`);
+        rendererLinePending = true;
+    }
+});
 
 
 
@@ -113,7 +191,9 @@ function createWindow() {
     mb.on(readyEvent, () => {
         require("@electron/remote/main").enable(mb.window.webContents);
         win = mb.window;
-       
+
+        initTrayAnimation();
+
         var webContents = win.webContents;
         createInputWindow()
        
@@ -124,10 +204,12 @@ function createWindow() {
         })
         win.on('show', () => {
             win.webContents.send('shortcutWin');
+            win.webContents.send('windowShow');
             if (handleVolumeButtonsGlobal) handleVolume();
         })
 
         win.on('hide', () => {
+            win.webContents.send('windowHide');
             if (handleVolumeButtonsGlobal) unhandleVolume();
         })
 
@@ -145,7 +227,6 @@ function createWindow() {
             console.log(`ipcDebug: ${arg}`)
         })
         ipcMain.handle('quit', event => {
-            server_runner.stopServer();
             app.exit()
         });
         ipcMain.handle('alwaysOnTop', (event, arg) => {
@@ -168,11 +249,13 @@ function createWindow() {
         });
         ipcMain.handle('isWSRunning', (event, arg) => {
             console.log('isWSRunning');
-            if (server_runner.isServerRunning()) win.webContents.send('wsserver_started')
+            // atvjs bridge is always ready - no server needed
+            win.webContents.send('wsserver_started')
         })
         
         ipcMain.handle('closeInputOpenRemote', (event, arg) => {
             console.log('closeInputOpenRemote');
+            win.webContents.send('keyboardWindowClosed');
             showWindow();
         })
         ipcMain.handle('openInputWindow', (event, arg) => {
@@ -188,6 +271,9 @@ function createWindow() {
             secondWindow.webContents.send('kbfocus-status', arg);
             kbHasFocus = arg;
         })
+        ipcMain.handle('isInputWindowVisible', () => {
+            return secondWindow && secondWindow.isVisible();
+        });
         ipcMain.handle('kbfocus', () => {
             win.webContents.send('kbfocus');
         })
@@ -198,20 +284,9 @@ function createWindow() {
 
         win.on('ready-to-show', () => {
             console.log('ready to show')
-            if (server_runner.isServerRunning()) {
-                win.webContents.send("wsserver_started")
-            }
-        })
-
-        if (server_runner.isServerRunning()) {
-            console.log(`server already running`)
+            // atvjs bridge is always ready - send started event
             win.webContents.send("wsserver_started")
-        } else {
-            console.log(`server waiting for event`)
-            server_runner.server_events.on("started", () => {
-                win.webContents.send("wsserver_started")
-            })
-        }
+        })
     })
 }
 
@@ -333,13 +408,7 @@ function registerHotkeys() {
 }
 
 app.whenReady().then(() => {
-
-    server_runner.testPythonExists().then(r => {
-        console.log(`python exists: ${r}`)
-    }).catch(err => {
-        console.log(`python does not exist: ${err}`)
-    })
-
+    // No longer need Python - using atvjs directly
     createWindow();
     registerHotkeys();
    
@@ -349,14 +418,14 @@ app.whenReady().then(() => {
         applicationVersion: version,
         version: version,
         credits: "Brian Harper",
-        copyright: "Copyright 2025",
+        copyright: "Copyright 2026",
         website: "https://github.com/bsharper",
         iconPath: "./images/full.png"
     });
 })
 
 app.on("before-quit", () => {
-    server_runner.stopServer();
+    // No cleanup needed - atvjs connections close automatically
 })
 
 app.on('window-all-closed', () => {
@@ -368,3 +437,32 @@ app.on('activate', () => {
         createWindow()
     }
 })
+
+// ── Graceful shutdown ────────────────────────────────────────────────────────
+
+function gracefulShutdown(signal) {
+    console.log(`Received ${signal}, shutting down`);
+    try {
+        app.quit();
+    } catch (_) {
+        process.exit(0);
+    }
+}
+
+// SIGTERM: sent by OS on shutdown / service managers on all platforms
+// SIGHUP:  terminal disconnect / session end on macOS/Linux
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+if (process.platform !== 'win32') {
+    process.on('SIGHUP', () => gracefulShutdown('SIGHUP'));
+}
+
+// Log uncaught exceptions before the process dies so the error is visible
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception:', err);
+    gracefulShutdown('uncaughtException');
+});
+
+// Log unhandled promise rejections — don't exit, they're usually non-fatal
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled rejection:', reason);
+});
